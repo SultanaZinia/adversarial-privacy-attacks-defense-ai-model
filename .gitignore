@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project artifacts
+data/
+outputs/
+outputs copy/
+
+# Logs/checkpoints
+*.log
+*.pt
+*.npz
+*.csv
