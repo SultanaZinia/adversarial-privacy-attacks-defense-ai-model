@@ -49,7 +49,6 @@ def set_seed(seed=42):
 #   Block 2: Conv(32→64) → ReLU → Conv(64→64) → ReLU → MaxPool [16x16 → 8x8]
 #   Head:    Flatten → FC(4096→256) → ReLU → Dropout(0.5) → FC(256→10)
 #
-# Dropout(0.5) reduces overfitting during training.
 # The small size is intentional — we WANT moderate overfitting to make
 # members and non-members distinguishable for MIA.
 
@@ -70,7 +69,6 @@ class SmallCNN(nn.Module):
             # --- Classification Head ---
             nn.Flatten(),                                 # 64 * 8 * 8 = 4096
             nn.Linear(64 * 8 * 8, 256), nn.ReLU(),
-            nn.Dropout(0.5),
             nn.Linear(256, num_classes)                   # raw logits (no softmax)
         )
 
@@ -150,6 +148,8 @@ def log_per_sample_mia_features(model, loader, device, split_name, csv_writer):
         # Confidence on the TOP predicted label
         conf_max  = probs.max(dim=1).values
         correct   = (pred == y).long()
+        entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=1)
+
 
         for i in range(x.size(0)):
             csv_writer.writerow([
@@ -161,6 +161,8 @@ def log_per_sample_mia_features(model, loader, device, split_name, csv_writer):
                 f"{losses[i].item():.6f}",
                 f"{conf_true[i].item():.6f}",
                 f"{conf_max[i].item():.6f}",
+                f"{entropy[i].item():.6f}",   # NEW column
+
             ])
 
 
@@ -238,7 +240,7 @@ def train_target_model(model, train_loader, target_eval_loader,
     """
     Train the target model and save the best checkpoint.
 
-    Optimizer: SGD with momentum=0.9, weight_decay=5e-4
+    Optimizer: SGD with momentum=0.9, weight_decay=0.0
     Scheduler: LR decays by 0.2x at epochs 60, 90, 110
     Checkpoint: saved when holdout_acc improves (best generalization)
 
@@ -249,8 +251,8 @@ def train_target_model(model, train_loader, target_eval_loader,
     epoch — the gap between them reveals how much the model is overfitting,
     which is the key signal for MIA attacks.
     """
-    opt   = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
-    sched = optim.lr_scheduler.MultiStepLR(opt, milestones=[60, 90, 110], gamma=0.2)
+    opt   = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0)
+    sched = optim.lr_scheduler.MultiStepLR(opt, milestones=[120,160], gamma=0.5)
     ce    = nn.CrossEntropyLoss()
 
     best_acc = 0.0
@@ -282,7 +284,7 @@ def train_target_model(model, train_loader, target_eval_loader,
                 return model
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # for overfitting
             opt.step()
 
             train_loss_sum += loss.item() * x.size(0)
@@ -365,7 +367,7 @@ def generate_mia_csv(model, train_ds_eval, target_idx, holdout_idx,
         writer = csv.writer(f)
         writer.writerow([
             "split_name", "index", "true_label", "pred_label",
-            "correct", "loss", "conf_true", "conf_max"
+            "correct", "loss", "conf_true", "conf_max", "entropy"
         ])
         log_per_sample_mia_features(model, member_loader,  device, "member",    writer)
         log_per_sample_mia_features(model, holdout_loader, device, "nonmember", writer)

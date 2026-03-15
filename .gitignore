@@ -17,10 +17,7 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Project artifacts
-data/
-outputs/
-outputs copy/
+# Project artifactsgit s
 
 # Logs/checkpoints
 *.log
