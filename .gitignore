@@ -23,4 +23,4 @@ env/
 *.log
 *.pt
 *.npz
-*.csv
+
