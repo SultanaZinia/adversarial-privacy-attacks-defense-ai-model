@@ -17,10 +17,10 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Project artifactsgit s
+# Project artifacts
+data/
 
 # Logs/checkpoints
 *.log
 *.pt
 *.npz
-
