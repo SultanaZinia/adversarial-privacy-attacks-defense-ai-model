@@ -1,0 +1,2 @@
+attack,num_shadows,shadow_in_size,shadow_out_size,shadow_epochs,n_members,n_nonmembers,accuracy,precision,recall_tpr,fpr,f1,auc_roc,attacker_advantage,tn,fp,fn,tp
+shadow_model_mia,4,3000,3000,80,6000,3000,0.615222,0.699043,0.7425,0.639333,0.720116,0.569948,0.206333,1082,1918,1545,4455

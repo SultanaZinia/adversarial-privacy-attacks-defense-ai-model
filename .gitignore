@@ -19,7 +19,11 @@ env/
 
 # Project artifacts
 data/
-outputs/
+outputs/*
+!outputs/logs/
+outputs/logs/*
+!outputs/logs/*.csv
+
 
 # Logs/checkpoints
 *.log
