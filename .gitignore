@@ -17,11 +17,15 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Project artifacts
+# Raw data (large, downloadable)
 data/
-outputs/
 
-# Logs/checkpoints
-*.log
+# Heavy binary artifacts — don't track
+outputs/checkpoints/
+outputs/splits/
 *.pt
 *.npz
+
+# Include logs, reports, and plots
+# outputs/logs/*.csv   — tracked
+# outputs/reports/     — tracked

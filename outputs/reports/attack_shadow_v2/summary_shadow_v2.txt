@@ -1,0 +1,17 @@
+==========================================================================
+SHADOW-MODEL ATTACK v2 — SUMMARY
+==========================================================================
+
+Attack model         : LogisticRegression
+Target ROC-AUC       : 0.7266
+Target TPR@0.1%FPR   : 0.0047
+Target TPR@1%FPR     : 0.0333
+Target best acc      : 0.7686
+Target advantage     : 0.5371
+
+Interpretation:
+  - Higher TPR@1%FPR means stronger practical privacy leakage.
+  - Compare against threshold attack v2 to see whether learned
+    shadow attack improves low-FPR member detection.
+
+==========================================================================
