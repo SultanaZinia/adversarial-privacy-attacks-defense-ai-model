@@ -37,7 +37,7 @@ from sklearn.metrics import roc_curve, auc, accuracy_score
 # =============================================================================
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 LOGS_DIR   = os.path.join(PROJECT_ROOT, "outputs", "logs")
 SHADOW_CSV = os.path.join(PROJECT_ROOT, "outputs", "reports",
@@ -49,6 +49,9 @@ os.makedirs(REPORT_DIR, exist_ok=True)
 CONFIGS = {
     "No defense"   : "per_sample_mia_v2.csv",
     "Regularised"  : "per_sample_mia_regularised.csv",
+    "Early stop"   : "per_sample_mia_early_stop.csv",
+    "Distillation" : "per_sample_mia_distillation.csv",
+    "Conf masking" : "per_sample_mia_conf_masking.csv",
     "DP  ε=10"     : "per_sample_mia_dp_eps10.csv",
     "DP  ε=5"      : "per_sample_mia_dp_eps5.csv",
     "DP  ε=1"      : "per_sample_mia_dp_eps1.csv",
@@ -56,11 +59,14 @@ CONFIGS = {
 
 # Colours per config for consistent plotting
 PALETTE = {
-    "No defense" : "#2C2C2A",
-    "Regularised": "#1D9E75",
-    "DP  ε=10"   : "#185FA5",
-    "DP  ε=5"    : "#BA7517",
-    "DP  ε=1"    : "#D85A30",
+    "No defense"   : "#2C2C2A",
+    "Regularised"  : "#1D9E75",
+    "Early stop"   : "#7F77DD",
+    "Distillation" : "#E07BAA",
+    "Conf masking" : "#4ECDC4",
+    "DP  ε=10"     : "#185FA5",
+    "DP  ε=5"      : "#BA7517",
+    "DP  ε=1"      : "#D85A30",
 }
 
 

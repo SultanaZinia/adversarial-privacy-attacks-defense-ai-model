@@ -6,13 +6,35 @@ The repository currently includes:
 
 - baseline target-model training
 - per-sample feature export for members and non-members
+- multiple defense mechanisms (regularisation, early stopping, knowledge distillation, confidence masking, DP-SGD)
+- threshold and shadow-model MIA attacks
+- unified defense comparison evaluation
 
 ## Repository Layout
 
-- `models/train_baseline.py`: trains the baseline CNN and writes MIA features
-- `data/`: CIFAR-10 download location
-- `outputs/`: training outputs such as splits, checkpoints, and logs
-- `reports/`: evaluation reports
+```
+models/
+  training/
+    train-baseline.py          # v1 baseline CNN + MIA feature export
+    train-baseline-v2.py       # v2 with fixed LR schedule + logit signals
+  defenses/
+    train-regularised.py       # L2 + label smoothing + dropout
+    train-early-stopping.py    # gap-based early stopping
+    train-distillation.py      # knowledge distillation (teacher → student)
+    apply-confidence-masking.py # post-hoc Laplace noise on outputs
+    train-dp-sgd.py            # DP-SGD via Opacus (ε = 1, 5, 10)
+  attacks/
+    attack-threshold.py        # v1 threshold attack (softmax signals)
+    attack-threshold-v2.py     # v2 threshold attack (logit signals)
+    attack-shadow.py           # shadow-model learned attack
+  evaluation/
+    eval-all-defenses.py       # final comparison across all defenses
+    eval-dp-attack.py          # DP-specific attack evaluation
+  utils/
+    extract-logits.py          # re-extract logit signals from checkpoint
+data/                          # CIFAR-10 download location
+outputs/                       # splits, checkpoints, logs, reports
+```
 
 ## Requirements
 
@@ -51,7 +73,7 @@ pip install -r requirements.txt
 From the project root:
 
 ```bash
-python models/train_baseline.py
+python models/training/train-baseline.py
 ```
 
 What the training script does:

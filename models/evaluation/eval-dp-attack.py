@@ -38,7 +38,7 @@ from sklearn.metrics import roc_curve, auc, accuracy_score
 # =============================================================================
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 LOGS_DIR      = os.path.join(PROJECT_ROOT, "outputs", "logs")
 SHADOW_CSV    = os.path.join(PROJECT_ROOT, "outputs", "reports",

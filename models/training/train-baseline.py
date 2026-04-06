@@ -387,7 +387,7 @@ def main():
     print(f"Using device: {device}\n")
 
     # This script lives in models/, so step up one level to the project root.
-    project_root    = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    project_root    = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     data_dir        = os.path.join(project_root, "data")
     splits_dir      = os.path.join(project_root, "outputs", "splits")
     checkpoints_dir = os.path.join(project_root, "outputs", "checkpoints")

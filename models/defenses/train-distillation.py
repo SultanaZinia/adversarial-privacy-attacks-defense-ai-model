@@ -1,57 +1,49 @@
 # =============================================================================
-# CS6413: Heuristic Defense — L2 Regularisation + Label Smoothing + Dropout
+# CS6413: Knowledge Distillation Defense
 # =============================================================================
 # PURPOSE:
-#   Retrain the SmallCNN with three heuristic defenses that reduce
-#   memorisation without the utility collapse seen in DP-SGD:
+#   Train a "teacher" model on the target split (same as baseline), then
+#   train a fresh "student" model using the teacher's soft predictions
+#   instead of hard labels.  The student learns the teacher's generalised
+#   knowledge without memorising individual training samples.
 #
-#     1. L2 regularisation (weight_decay=1e-3)
-#        Penalises large weights in the loss function. Large weights are
-#        what allow the model to memorise individual samples — shrinking
-#        them forces the model to learn more general features instead.
-#        Direct effect: reduces logit_gap magnitude for members, making
-#        them harder to distinguish from non-members.
+# WHY IT WORKS AGAINST MIA:
+#   Membership inference exploits the gap between how a model treats its
+#   training data vs unseen data.  Distillation smooths this gap because:
+#     1. Soft labels carry inter-class similarity info (e.g. "this cat
+#        image is 70% cat, 15% dog, 10% deer") — the student learns
+#        relationships, not rote memorisation of one-hot targets.
+#     2. The temperature parameter τ controls how soft the labels are.
+#        Higher τ → softer distributions → less memorisation.
+#     3. The student never sees the original hard labels directly, so
+#        it cannot overfit to individual sample idiosyncrasies.
 #
-#     2. Label smoothing (smoothing=0.1)
-#        Replaces hard targets (0 or 1) with soft targets (0.05 or 0.95).
-#        Prevents the model from becoming overconfident on training samples.
-#        Direct effect: caps maximum softmax confidence, reducing the
-#        conf_true signal that threshold attacks exploit.
+# TEMPERATURE (τ):
+#   τ = 1  → standard softmax (no extra smoothing)
+#   τ = 5  → moderate smoothing (our default)
+#   τ = 20 → very soft, almost uniform — too much destroys utility
 #
-#     3. Dropout (p=0.5) after FC(256)
-#        Randomly disables 50% of neurons during training. Forces the
-#        network to learn redundant representations rather than memorising
-#        specific training samples through individual neurons.
-#        Direct effect: reduces overfitting gap (member_acc - holdout_acc).
-#
-#   These three are combined because they attack different aspects of
-#   memorisation simultaneously. Each alone gives partial protection;
-#   together they provide meaningful privacy without destroying utility.
-#
-# COMPARISON WITH DP-SGD:
-#   DP-SGD: formal (ε,δ)-DP guarantee, but utility collapses on small
-#           datasets (33% accuracy on our 6K training set).
-#   This script: no formal guarantee, but maintains ~65-70% holdout
-#           accuracy while measurably reducing attack AUC.
-#   The contrast between the two is a core finding of this project.
+# DISTILLATION LOSS:
+#   L = α · KL(student_soft || teacher_soft) · τ²  +  (1-α) · CE(student, hard_label)
+#   The τ² scaling compensates for the reduced gradient magnitude at high τ.
+#   α = 0.7 means we lean heavily on the teacher's soft knowledge.
 #
 # INPUTS:
 #   outputs/splits/cifar10_12k_seed42.npz
 #   data/cifar-10-batches-py
 #
 # OUTPUTS:
-#   outputs/checkpoints/best_regularised.pt
-#   outputs/logs/train_log_regularised.csv
-#   outputs/logs/per_sample_mia_regularised.csv
+#   outputs/checkpoints/best_distilled.pt
+#   outputs/logs/train_log_distillation.csv
+#   outputs/logs/per_sample_mia_distillation.csv
 # =============================================================================
 
-import os
-import csv
-import random
+import os, csv, random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
 
@@ -61,7 +53,7 @@ from torch.utils.data import DataLoader, Subset
 # =============================================================================
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 DATA_DIR        = os.path.join(PROJECT_ROOT, "data")
 SPLITS_PATH     = os.path.join(PROJECT_ROOT, "outputs", "splits",
@@ -87,19 +79,12 @@ def set_seed(seed=42):
 
 
 # =============================================================================
-# SECTION 3: MODEL — with Dropout restored as defense
+# SECTION 3: MODEL
 # =============================================================================
 
 class SmallCNN(nn.Module):
-    """
-    Same architecture as train_v2.py with one change:
-    Dropout(0.5) is added before the final FC layer.
-
-    In train_v2.py dropout was intentionally REMOVED to maximise
-    memorisation for attack experiments. Here we ADD it back as
-    a defense — it was always in the original proposal architecture.
-    """
-    def __init__(self, num_classes=10, dropout_p=0.5):
+    """Identical architecture to train_v2.py — no dropout, no BatchNorm."""
+    def __init__(self, num_classes=10):
         super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1), nn.ReLU(),
@@ -110,7 +95,6 @@ class SmallCNN(nn.Module):
             nn.MaxPool2d(2),
             nn.Flatten(),
             nn.Linear(64 * 8 * 8, 256), nn.ReLU(),
-            nn.Dropout(p=dropout_p),          # DEFENSE: prevents neuron co-adaptation
             nn.Linear(256, num_classes),
         )
 
@@ -153,7 +137,7 @@ def eval_accuracy(model, loader, device):
 
 @torch.no_grad()
 def log_mia_features(model, loader, device, split_name, writer):
-    """Extract all v2 MIA signals — identical to train_v2.py and train_dp.py."""
+    """Extract all v2 MIA signals — identical to train_v2.py."""
     model.eval()
     ce      = nn.CrossEntropyLoss(reduction="none")
     softmax = nn.Softmax(dim=1)
@@ -190,30 +174,80 @@ def log_mia_features(model, loader, device, split_name, writer):
 
 
 # =============================================================================
-# SECTION 6: TRAINING LOOP
+# SECTION 6: TEACHER TRAINING
 # =============================================================================
 
-def train(model, train_loader, eval_loader, holdout_loader,
-          device, ckpt_path, log_path, epochs=150):
+def train_teacher(model, train_loader, device, epochs=150):
     """
-    Three defense changes vs train_v2.py:
-      1. weight_decay=1e-3  → L2 regularisation
-      2. label_smoothing=0.1 in CrossEntropyLoss
-      3. Dropout(0.5) is in the model architecture above
-
-    Everything else (LR schedule, epochs, seed) is identical so
-    results are directly comparable to the no-defense baseline.
+    Train the teacher model identically to train_v2.py.
+    The teacher will overfit — that's fine. We only use its soft outputs.
     """
-    # DEFENSE 1: L2 regularisation via weight_decay
-    opt = optim.SGD(model.parameters(), lr=0.01, momentum=0.9,
-                    weight_decay=1e-3)
+    opt   = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0)
+    sched = optim.lr_scheduler.MultiStepLR(opt, milestones=[40, 80, 110], gamma=0.5)
+    ce    = nn.CrossEntropyLoss()
 
-    sched = optim.lr_scheduler.MultiStepLR(
-        opt, milestones=[40, 80, 110], gamma=0.5)
+    for epoch in range(1, epochs + 1):
+        model.train()
+        loss_sum = correct = total = 0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            opt.zero_grad()
+            logits = model(x)
+            loss   = ce(logits, y)
+            loss.backward()
+            opt.step()
+            loss_sum += loss.item() * x.size(0)
+            correct  += (logits.argmax(1) == y).sum().item()
+            total    += y.size(0)
+        sched.step()
 
-    # DEFENSE 2: label smoothing — soft targets instead of hard 0/1
-    ce = nn.CrossEntropyLoss(label_smoothing=0.1)
+        if epoch % 30 == 0 or epoch <= 3:
+            print(f"  Teacher Ep {epoch:03d} | loss={loss_sum/total:.4f} | "
+                  f"acc={correct/total:.4f}")
 
+    print("  Teacher training complete.")
+    return model
+
+
+# =============================================================================
+# SECTION 7: DISTILLATION TRAINING
+# =============================================================================
+
+def distillation_loss(student_logits, teacher_logits, hard_labels,
+                      temperature=5.0, alpha=0.7):
+    """
+    Combined distillation loss:
+      L = α · KL(soft_student || soft_teacher) · τ²  +  (1-α) · CE(student, label)
+
+    The KL term teaches the student to mimic the teacher's soft predictions.
+    The CE term keeps the student grounded on the actual task.
+    τ² scaling compensates for reduced gradient magnitude at high temperature.
+    """
+    soft_student = F.log_softmax(student_logits / temperature, dim=1)
+    soft_teacher = F.softmax(teacher_logits / temperature, dim=1)
+
+    kl = F.kl_div(soft_student, soft_teacher, reduction="batchmean") * (temperature ** 2)
+    ce = F.cross_entropy(student_logits, hard_labels)
+
+    return alpha * kl + (1 - alpha) * ce
+
+
+def train_student(student, teacher, train_loader, eval_loader, holdout_loader,
+                  device, ckpt_path, log_path, temperature=5.0, alpha=0.7,
+                  epochs=150):
+    """
+    Train the student using the teacher's soft labels.
+
+    Key difference from normal training: the loss function uses the
+    teacher's output distribution instead of (or in addition to) the
+    hard one-hot labels. This prevents the student from memorising
+    individual samples because the soft labels encode the teacher's
+    generalised knowledge, not sample-specific patterns.
+    """
+    teacher.eval()  # teacher is frozen — inference only
+
+    opt   = optim.SGD(student.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0)
+    sched = optim.lr_scheduler.MultiStepLR(opt, milestones=[40, 80, 110], gamma=0.5)
     best_acc = 0.0
 
     with open(log_path, "w", newline="") as f:
@@ -222,42 +256,44 @@ def train(model, train_loader, eval_loader, holdout_loader,
             "member_eval_acc", "holdout_acc", "best_acc", "overfit_gap"
         ])
 
-    print(f"Defenses active: L2 (wd=1e-3) | "
-          f"Label smoothing (0.1) | Dropout (p=0.5)")
-    print(f"Epochs: {epochs} | LR schedule: decay at 40, 80, 110\n")
+    print(f"  Distillation: τ={temperature} | α={alpha} | epochs={epochs}")
 
     for epoch in range(1, epochs + 1):
-        model.train()
+        student.train()
         loss_sum = correct = total = 0
 
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)
             opt.zero_grad()
-            logits = model(x)
-            loss   = ce(logits, y)
+
+            student_logits = student(x)
+            with torch.no_grad():
+                teacher_logits = teacher(x)
+
+            loss = distillation_loss(student_logits, teacher_logits, y,
+                                     temperature=temperature, alpha=alpha)
             loss.backward()
             opt.step()
 
             loss_sum += loss.item() * x.size(0)
-            correct  += (logits.argmax(1) == y).sum().item()
+            correct  += (student_logits.argmax(1) == y).sum().item()
             total    += y.size(0)
 
         sched.step()
 
         train_loss = loss_sum / total
         train_acc  = correct  / total
-        mem_acc    = eval_accuracy(model, eval_loader,    device)
-        hld_acc    = eval_accuracy(model, holdout_loader, device)
+        mem_acc    = eval_accuracy(student, eval_loader,    device)
+        hld_acc    = eval_accuracy(student, holdout_loader, device)
         gap        = mem_acc - hld_acc
 
         if hld_acc > best_acc:
             best_acc = hld_acc
-            torch.save(model.state_dict(), ckpt_path)
+            torch.save(student.state_dict(), ckpt_path)
 
         if epoch % 10 == 0 or epoch <= 5:
-            print(f"Ep {epoch:03d} | loss={train_loss:.4f} | "
-                  f"mem={mem_acc:.4f} | hld={hld_acc:.4f} | "
-                  f"gap={gap:.4f}")
+            print(f"  Student Ep {epoch:03d} | loss={train_loss:.4f} | "
+                  f"mem={mem_acc:.4f} | hld={hld_acc:.4f} | gap={gap:.4f}")
 
         with open(log_path, "a", newline="") as f:
             csv.writer(f).writerow([
@@ -266,13 +302,12 @@ def train(model, train_loader, eval_loader, holdout_loader,
                 f"{best_acc:.6f}", f"{gap:.6f}",
             ])
 
-    print(f"\nBest holdout acc : {best_acc:.4f}")
-    print(f"Checkpoint saved : {ckpt_path}")
-    return best_acc
+    print(f"  Best holdout acc: {best_acc:.4f}")
+    return student
 
 
 # =============================================================================
-# SECTION 7: MIA FEATURE EXPORT
+# SECTION 8: MIA FEATURE EXPORT
 # =============================================================================
 
 def export_mia_csv(model, ckpt_path, target_idx, holdout_idx, device):
@@ -294,9 +329,9 @@ def export_mia_csv(model, ckpt_path, target_idx, holdout_idx, device):
 
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.to(device)
-    print(f"Loaded checkpoint: {ckpt_path}")
+    print(f"  Loaded checkpoint: {ckpt_path}")
 
-    out = os.path.join(LOGS_DIR, "per_sample_mia_regularised.csv")
+    out = os.path.join(LOGS_DIR, "per_sample_mia_distillation.csv")
     header = [
         "split_name","index","true_label","pred_label","correct",
         "loss","conf_true","conf_max","entropy",
@@ -308,12 +343,12 @@ def export_mia_csv(model, ckpt_path, target_idx, holdout_idx, device):
         log_mia_features(model, mem_loader, device, "member",    writer)
         log_mia_features(model, hld_loader, device, "nonmember", writer)
 
-    print(f"MIA features saved: {out}")
+    print(f"  MIA features saved: {out}")
     return out
 
 
 # =============================================================================
-# SECTION 8: MAIN
+# SECTION 9: MAIN
 # =============================================================================
 
 def main():
@@ -356,20 +391,30 @@ def main():
         Subset(ds_eval, holdout_idx),
         batch_size=256, shuffle=False, num_workers=2)
 
-    ckpt_path = os.path.join(CKPT_DIR, "best_regularised.pt")
-    log_path  = os.path.join(LOGS_DIR, "train_log_regularised.csv")
+    ckpt_path = os.path.join(CKPT_DIR, "best_distilled.pt")
+    log_path  = os.path.join(LOGS_DIR, "train_log_distillation.csv")
 
+    # ── Step 1: Train teacher ─────────────────────────────────────────────
     print("=" * 60)
-    print("STEP 1: Training with heuristic defenses")
+    print("STEP 1: Training teacher model (150 epochs)")
     print("=" * 60)
-    model = SmallCNN(num_classes=10, dropout_p=0.5).to(device)
-    train(model, train_loader, eval_loader, hld_loader,
-          device, ckpt_path, log_path, epochs=150)
+    teacher = SmallCNN(num_classes=10).to(device)
+    train_teacher(teacher, train_loader, device, epochs=150)
 
+    # ── Step 2: Train student via distillation ────────────────────────────
     print("\n" + "=" * 60)
-    print("STEP 2: Exporting MIA features")
+    print("STEP 2: Training student via knowledge distillation (τ=5, α=0.7)")
     print("=" * 60)
-    export_mia_csv(model, ckpt_path, target_idx, holdout_idx, device)
+    student = SmallCNN(num_classes=10).to(device)
+    train_student(student, teacher, train_loader, eval_loader, hld_loader,
+                  device, ckpt_path, log_path,
+                  temperature=5.0, alpha=0.7, epochs=150)
+
+    # ── Step 3: Export MIA features ───────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("STEP 3: Exporting MIA features")
+    print("=" * 60)
+    export_mia_csv(student, ckpt_path, target_idx, holdout_idx, device)
 
     print("\n" + "=" * 60)
     print("DONE — next: run eval_all_defenses.py")

@@ -46,7 +46,7 @@ from sklearn.metrics import (
 
 # Resolve paths relative to THIS file so the script works from any cwd.
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 MIA_CSV      = os.path.join(PROJECT_ROOT, "outputs", "logs", "per_sample_mia.csv")
 REPORT_DIR   = os.path.join(PROJECT_ROOT, "outputs", "reports", "threshold_attack")
