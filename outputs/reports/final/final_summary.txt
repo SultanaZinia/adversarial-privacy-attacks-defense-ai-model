@@ -5,6 +5,7 @@ FINAL DEFENSE COMPARISON SUMMARY
 Config            Thresh AUC  Shadow AUC  TPR@1%(shd)  Advantage  Holdout acc  Overfit gap
 ----------------------------------------------------------------------------------
 No defense            0.6864      0.7266       0.0333     0.5371       0.7167       0.2800
+Regularised           0.6031      0.5973       0.0093     0.3873       0.7277       0.1733
 Early stop            0.5483      0.5462       0.0115     0.3404       0.6370       0.0798
 Distillation          0.6726      0.6981       0.0343     0.5129       0.7373       0.2502
 Conf masking          0.6857      0.6811       0.0175     0.5004       0.7117       0.2822

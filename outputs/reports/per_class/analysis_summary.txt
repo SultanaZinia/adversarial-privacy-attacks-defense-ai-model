@@ -1,0 +1,35 @@
+======================================================================
+PER-CLASS MIA VULNERABILITY ANALYSIS
+======================================================================
+
+KEY FINDING 1: Privacy risk is NOT uniform across classes
+  Most vulnerable class:  cat (AUC=0.8457)
+  Least vulnerable class: ship (AUC=0.6179)
+  Range: 0.2278
+
+  Class ranking (no defense, shadow AUC):
+    cat          0.8457  █████████████████████████████████
+    dog          0.8103  ████████████████████████████████
+    bird         0.7565  ██████████████████████████████
+    airplane     0.7363  █████████████████████████████
+    deer         0.7225  ████████████████████████████
+    horse        0.7105  ████████████████████████████
+    frog         0.7001  ████████████████████████████
+    automobile   0.6606  ██████████████████████████
+    truck        0.6186  ████████████████████████
+    ship         0.6179  ████████████████████████
+
+KEY FINDING 2: Memorisation predicts vulnerability
+  Correlation (overfit gap vs AUC): r = 0.980
+  Classes the model memorises more are more vulnerable to MIA.
+
+KEY FINDING 3: Defenses affect classes differently
+  Early stop      : mean AUC reduction = +0.1647, class std = 0.0205
+  Distillation    : mean AUC reduction = +0.0276, class std = 0.0690
+  Conf masking    : mean AUC reduction = +0.0412, class std = 0.0692
+
+IMPLICATION: Aggregate AUC understates risk for vulnerable classes.
+A defense that lowers mean AUC but leaves high variance still
+exposes users in vulnerable classes to significant privacy risk.
+
+======================================================================
